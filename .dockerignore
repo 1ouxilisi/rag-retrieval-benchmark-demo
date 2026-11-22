@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.pyo
+# 向量缓存不进镜像，启动时按 docs 重建
+embeddings.npz
+chunks.json
+# 评测报告与日志不属于交付运行时
+retrieval_report.md
+*.log
