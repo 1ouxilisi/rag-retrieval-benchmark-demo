@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RAG 检索策略对照 · 本地 Demo</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+         background: #0f1720; color: #e6edf3; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 28px 20px 40px; }
+  header { margin-bottom: 20px; }
+  h1 { font-size: 21px; margin: 0 0 6px; font-weight: 600; letter-spacing: .3px; }
+  .sub { font-size: 13px; color: #8b98a5; line-height: 1.7; }
+  .badge { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 99px;
+           background: #16333d; color: #58c4c4; border: 1px solid #234c56; margin-right: 6px; }
+  .panel { background: #151e27; border: 1px solid #22303d; border-radius: 14px; padding: 18px; }
+  .row { display: flex; gap: 10px; }
+  select, #q { padding: 12px 14px; border-radius: 10px; border: 1px solid #2a3a48;
+       background: #0e1620; color: #e6edf3; font-size: 14px; outline: none; }
+  select { flex: 0 0 150px; }
+  #q { flex: 1; }
+  button { padding: 12px 20px; border-radius: 10px; border: none; cursor: pointer;
+           background: #2f8f8f; color: #fff; font-size: 14px; font-weight: 500; }
+  button:disabled { opacity: .55; cursor: not-allowed; }
+  .chips { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip { font-size: 12.5px; padding: 6px 11px; border-radius: 99px; cursor: pointer;
+          background: #17242e; border: 1px solid #28394a; color: #a9b8c6; }
+  .chip:hover { border-color: #3d7f8f; color: #d7e7ef; }
+  #log { margin-top: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .q { background: #1d3a4d; align-self: flex-end; max-width: 82%; border: 1px solid #2b5470;
+       font-size: 14.5px; line-height: 1.75; padding: 11px 14px; border-radius: 11px; }
+  .hit { background: #18232e; border: 1px solid #24333f; border-radius: 11px; padding: 12px 14px; }
+  .hit .meta { font-size: 12.5px; color: #7d8b98; margin-bottom: 6px; }
+  .hit .meta .src { color: #58c4c4; }
+  .hit .text { font-size: 14px; line-height: 1.7; white-space: pre-wrap; }
+  footer { margin-top: 16px; font-size: 12px; color: #66757f; line-height: 1.8; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>RAG 检索策略对照基线</h1>
+    <div class="sub">
+      <span class="badge">vector 向量</span><span class="badge">BM25 关键词</span><span class="badge">hybrid RRF 混合</span><br>
+      同一批样例知识库，对比三种检索策略的命中来源与得分；本页面只演示检索层，不接对话生成。
+    </div>
+  </header>
+
+  <div class="panel">
+    <div class="row">
+      <select id="strategy">
+        <option value="hybrid">hybrid（RRF 混合）</option>
+        <option value="vector">vector（bge-m3 向量）</option>
+        <option value="bm25">bm25（关键词）</option>
+      </select>
+      <input id="q" placeholder="输入问题，例如：安装家充桩的条件与审批以什么为准？" autocomplete="off">
+      <button id="send">检索</button>
+    </div>
+    <div class="chips" id="chips"></div>
+  </div>
+
+  <div id="log"></div>
+
+  <footer>
+    检索链路：文档切块 → 向量 / BM25 分别建索引 → Top-3 命中；混合策略用 RRF 融合两路排名。<br>
+    样例数据仅用于演示，正式交付时替换为客户真实资料。
+  </footer>
+</div>
+
+<script>
+const log = document.getElementById('log');
+const input = document.getElementById('q');
+const sendBtn = document.getElementById('send');
+const strategy = document.getElementById('strategy');
+const chips = document.getElementById('chips');
+
+const presets = [
+  '纯电车首保建议在什么时候做？',
+  '充电枪插上没反应，应该怎么排查？',
+  '接待客户时需要先确认哪些关键信息？',
+  '安装家充桩的条件与审批以什么为准？'
+];
+presets.forEach(t => {
+  const el = document.createElement('div');
+  el.className = 'chip';
+  el.textContent = t;
+  el.onclick = () => { input.value = t; input.focus(); };
+  chips.appendChild(el);
+});
+
+function addQ(text) {
+  const d = document.createElement('div');
+  d.className = 'q';
+  d.textContent = text;
+  log.appendChild(d);
+}
+
+function addHits(hits) {
+  if (!hits || !hits.length) {
+    const d = document.createElement('div');
+    d.className = 'hit';
+    d.textContent = '未检索到命中。';
+    log.appendChild(d);
+    return;
+  }
+  hits.forEach((h, i) => {
+    const d = document.createElement('div');
+    d.className = 'hit';
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.innerHTML = `#${i + 1} <span class="src"></span> · 得分 ${h.score}`;
+    meta.querySelector('.src').textContent = h.source;
+    const text = document.createElement('div');
+    text.className = 'text';
+    text.textContent = h.text;
+    d.appendChild(meta);
+    d.appendChild(text);
+    log.appendChild(d);
+  });
+  log.scrollTop = log.scrollHeight;
+}
+
+async function ask() {
+  const q = input.value.trim();
+  if (!q) return;
+  input.value = '';
+  sendBtn.disabled = true;
+  addQ(q);
+  try {
+    const r = await fetch('/api/retrieve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: q, strategy: strategy.value })
+    });
+    const data = await r.json();
+    addHits(data.hits || []);
+  } catch (e) {
+    const d = document.createElement('div');
+    d.className = 'hit';
+    d.textContent = '请求失败：' + e;
+    log.appendChild(d);
+  } finally {
+    sendBtn.disabled = false;
+    input.focus();
+  }
+}
+
+sendBtn.onclick = ask;
+input.addEventListener('keydown', e => { if (e.key === 'Enter') ask(); });
+</script>
+</body>
+</html>
